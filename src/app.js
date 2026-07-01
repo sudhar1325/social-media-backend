@@ -25,7 +25,7 @@ app.get('/api/health', (req, res) => res.json({ success: true, message: 'API is 
 app.use('/api/auth', authRoutes);
 app.use('/api/posts', postRoutes);
 app.use('/api/admin', adminRoutes);
-app.use('/api', userRoutes);
+app.use('/api/profile', userRoutes);
 
 app.use(notFound);
 app.use(errorHandler);

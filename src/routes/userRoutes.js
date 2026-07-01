@@ -2,10 +2,14 @@ const router = require('express').Router();
 const bcrypt = require('bcryptjs');
 const { protect } = require('../middleware/auth');
 const User = require('../models/User');
+const upload = require('../middleware/upload');
+const { profileDetails, updateProfile, uploadAvatar } = require('../controllers/profileController');
 
-router.get('/profile', protect, async (req, res) => {
-  res.json({ success: true, user: req.user });
-});
+router.get('/', protect, profileDetails);
+router.put('/', protect, updateProfile);
+router.put('/avatar', protect, upload.single('avatar'), uploadAvatar);
+
+module.exports = router;
 
 router.put('/profile', protect, async (req, res, next) => {
   try {
