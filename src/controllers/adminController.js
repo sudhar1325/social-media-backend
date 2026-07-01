@@ -131,6 +131,75 @@ const setUserStatus = async (req, res, next) => {
   }
 };
 
+const updateUser = async (req, res, next) => {
+  try {
+    const { username, email, role, accountStatus } = req.body;
+
+    const user = await User.findByIdAndUpdate(
+      req.params.id,
+      { username, email, role, accountStatus },
+      { new: true, runValidators: true }
+    ).select('-password');
+
+    if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+
+    res.json({ success: true, user });
+  } catch (err) {
+    next(err);
+  }
+};
+
+const deleteUser = async (req, res, next) => {
+  try {
+    const user = await User.findById(req.params.id);
+
+    if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+
+    if (user.role === 'admin') {
+      return res.status(403).json({ success: false, message: 'Cannot delete an admin user' });
+    }
+
+    await User.findByIdAndDelete(req.params.id);
+    res.json({ success: true, message: 'User deleted' });
+  } catch (err) {
+    next(err);
+  }
+};
+
+const bcrypt = require('bcryptjs');
+
+const createUser = async (req, res, next) => {
+  try {
+    const { username, email, password, role } = req.body;
+
+    if (!username || !email || !password) {
+      return res.status(400).json({ success: false, message: 'Username, email and password are required' });
+    }
+
+    const existing = await User.findOne({ $or: [{ username }, { email }] });
+    if (existing) {
+      return res.status(400).json({ success: false, message: 'Username or email already in use' });
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    const user = await User.create({
+      username,
+      email,
+      password: hashedPassword,
+      role: role || 'user',
+      accountStatus: 'active',
+    });
+
+    const userObj = user.toObject();
+    delete userObj.password;
+
+    res.status(201).json({ success: true, user: userObj });
+  } catch (err) {
+    next(err);
+  }
+};
+
 const getReports = async (req, res, next) => {
   try {
     const reports = await Report.find({
@@ -205,6 +274,9 @@ module.exports = {
   getPendingUsers,
   approveUser,
   setUserStatus,
+  updateUser,
+  deleteUser,
+  createUser,
   getReports,
   resolveReport,
 };
