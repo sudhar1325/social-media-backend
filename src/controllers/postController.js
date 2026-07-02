@@ -1,18 +1,97 @@
+const fs = require('fs');
+const path = require('path');
 const Post = require('../models/Post');
 
+// optional: use ffprobe-static so no system install needed
+let ffmpeg;
+try {
+  ffmpeg = require('fluent-ffmpeg');
+  const ffprobeStatic = require('ffprobe-static');
+  ffmpeg.setFfprobePath(ffprobeStatic.path);
+} catch {
+  ffmpeg = null;
+}
+
+const MAX_IMAGE_SIZE = 5 * 1024 * 1024;   // 5 MB
+const MAX_VIDEO_DURATION = 30;             // seconds
+
+// delete a file from disk silently
+const removeFile = (filePath) => {
+  try { fs.unlinkSync(filePath); } catch {}
+};
+
+// get video duration via ffprobe — returns a Promise<number>
+const getVideoDuration = (filePath) =>
+  new Promise((resolve, reject) => {
+    if (!ffmpeg) return reject(new Error('ffmpeg not available'));
+    ffmpeg.ffprobe(filePath, (err, metadata) => {
+      if (err) return reject(err);
+      resolve(metadata.format.duration || 0);
+    });
+  });
+
 const createPost = async (req, res, next) => {
+  const uploadedPaths = (req.files || []).map((f) =>
+    path.join(__dirname, '..', '..', 'uploads', f.filename)
+  );
+
   try {
     const { description, category } = req.body;
+
+    if (!description && (!req.files || req.files.length === 0)) {
+      return res.status(400).json({ success: false, message: 'Post must have text or media' });
+    }
+
+    const mediaFiles = [];
+    const errors = [];
+
+    for (const file of req.files || []) {
+      const isVideo = file.mimetype.startsWith('video');
+      const isImage = file.mimetype.startsWith('image');
+      const filePath = path.join(__dirname, '..', '..', 'uploads', file.filename);
+
+      if (isImage) {
+        if (file.size > MAX_IMAGE_SIZE) {
+          removeFile(filePath);
+          errors.push(`"${file.originalname}" exceeds 5 MB limit`);
+          continue;
+        }
+      }
+
+      if (isVideo) {
+        try {
+          const duration = await getVideoDuration(filePath);
+          if (duration > MAX_VIDEO_DURATION) {
+            removeFile(filePath);
+            errors.push(`"${file.originalname}" is ${Math.round(duration)}s — videos must be under 30 seconds`);
+            continue;
+          }
+        } catch {
+          // if ffprobe unavailable, skip duration check but still save
+        }
+      }
+
+      mediaFiles.push({
+        url: `/uploads/${file.filename}`,
+        type: isVideo ? 'video' : 'image',
+      });
+    }
+
+    // if every file failed validation, return all errors
+    if (req.files?.length > 0 && mediaFiles.length === 0) {
+      return res.status(400).json({ success: false, message: errors.join(' | ') });
+    }
+
     let mediaType = 'text';
     let mediaURL = '';
 
-    if (req.file) {
-      mediaURL = `/uploads/${req.file.filename}`;
-      mediaType = req.file.mimetype.startsWith('video') ? 'video' : 'image';
-    }
-
-    if (!description && !mediaURL) {
-      return res.status(400).json({ success: false, message: 'Post must have text or media' });
+    if (mediaFiles.length > 0) {
+      const hasImage = mediaFiles.some((f) => f.type === 'image');
+      const hasVideo = mediaFiles.some((f) => f.type === 'video');
+      if (hasImage && hasVideo) mediaType = 'mixed';
+      else if (hasVideo) mediaType = 'video';
+      else mediaType = 'image';
+      mediaURL = mediaFiles[0].url;
     }
 
     const post = await Post.create({
@@ -20,17 +99,25 @@ const createPost = async (req, res, next) => {
       description: description || '',
       mediaType,
       mediaURL,
+      mediaFiles,
       category: category || 'general',
       status: 'pending',
     });
 
-    res.status(201).json({ success: true, post });
+    // warn about partial failures (some files ok, some rejected)
+    const response = { success: true, post };
+    if (errors.length > 0) {
+      response.warnings = errors;
+    }
+
+    res.status(201).json(response);
   } catch (err) {
+    // clean up any uploaded files on unexpected error
+    uploadedPaths.forEach(removeFile);
     next(err);
   }
 };
 
-// Public feed: only approved posts
 const getFeed = async (req, res, next) => {
   try {
     const page = parseInt(req.query.page) || 1;
@@ -43,7 +130,6 @@ const getFeed = async (req, res, next) => {
       .limit(limit);
 
     const total = await Post.countDocuments({ status: 'approved' });
-
     res.json({ success: true, posts, page, totalPages: Math.ceil(total / limit) });
   } catch (err) {
     next(err);
@@ -60,7 +146,6 @@ const getPost = async (req, res, next) => {
   }
 };
 
-// Posts belonging to logged-in user (any status)
 const getMyPosts = async (req, res, next) => {
   try {
     const posts = await Post.find({ userId: req.user._id }).sort({ createdAt: -1 });
@@ -79,7 +164,6 @@ const updatePost = async (req, res, next) => {
     }
     post.description = req.body.description ?? post.description;
     post.category = req.body.category ?? post.category;
-    // Editing resets status to pending for re-moderation
     post.status = 'pending';
     post.rejectionReason = '';
     await post.save();
