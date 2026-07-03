@@ -16,7 +16,7 @@ const { reportPost } = require('../controllers/reportController');
 router.get('/', protect, getFeed);
 router.get('/mine', protect, getMyPosts);
 router.get('/:id', protect, getPost);
-router.post('/', protect, upload.single('media'), createPost);
+router.post('/', protect, upload.array('media', 10), createPost);
 router.put('/:id', protect, updatePost);
 router.delete('/:id', protect, deletePost);
 
