@@ -13,7 +13,7 @@ const { likePost, unlikePost } = require('../controllers/likeController');
 const { addComment, getComments, deleteComment } = require('../controllers/commentController');
 const { reportPost } = require('../controllers/reportController');
 
-router.get('/', protect, getFeed);
+router.get('/feed', protect, getFeed);
 router.get('/mine', protect, getMyPosts);
 router.get('/:id', protect, getPost);
 router.post('/', protect, upload.array('media', 10), createPost);
